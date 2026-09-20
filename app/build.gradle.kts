@@ -11,8 +11,8 @@ android {
         applicationId = "com.tomasthrawat.hyoukacatbox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
     }
 
     compileOptions {
@@ -27,7 +27,7 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-ktx:1.13.0")
+    implementation("androidx.activity:activity-ktx:1.12.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
