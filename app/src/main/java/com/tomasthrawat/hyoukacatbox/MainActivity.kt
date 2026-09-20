@@ -57,17 +57,20 @@ class MainActivity : AppCompatActivity() {
                 status.text = "Uploading ${index + 1}/${uris.size}..."
 
                 val result = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val file = copyToCache(uri)
-                        try {
-                            api.upload(
-                                file,
-                                hash.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-                            )
-                        } finally {
-                            file.delete()
-                        }
-                    }
+                    val fileResult = runCatching { copyToCache(uri) }
+                    fileResult.fold(
+                        onSuccess = { file ->
+                            try {
+                                api.upload(
+                                    file,
+                                    hash.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                                )
+                            } finally {
+                                file.delete()
+                            }
+                        },
+                        onFailure = { Result.failure<String>(it) }
+                    )
                 }
 
                 result.onSuccess {
@@ -93,8 +96,9 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             status.text = "Loading..."
+
             val result = withContext(Dispatchers.IO) {
-                runCatching { api.files(h) }
+                api.files(h)
             }
 
             result.onSuccess { list ->
