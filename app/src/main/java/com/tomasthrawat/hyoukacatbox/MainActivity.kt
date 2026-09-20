@@ -1,13 +1,17 @@
 package com.tomasthrawat.hyoukacatbox
 
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -16,7 +20,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
     private lateinit var filesView: TextView
     private lateinit var hash: EditText
@@ -34,56 +38,138 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        status = findViewById(R.id.status)
-        filesView = findViewById(R.id.files)
-        hash = findViewById(R.id.userhash)
+        try {
+            buildUi()
+        } catch (t: Throwable) {
+            val fallback = TextView(this).apply {
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.BLACK)
+                textSize = 16f
+                setPadding(dp(20), dp(20), dp(20), dp(20))
+                text = "Hyouka Cloud failed to start\n\n" +
+                    t.javaClass.simpleName + ": " + (t.message ?: "unknown error")
+            }
+            setContentView(fallback)
+        }
+    }
 
-        findViewById<Button>(R.id.upload).setOnClickListener {
-            picker.launch(arrayOf("*/*"))
+    private fun buildUi() {
+        window.statusBarColor = Color.BLACK
+        window.navigationBarColor = Color.BLACK
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+            setPadding(dp(16), dp(20), dp(16), dp(20))
         }
-        findViewById<Button>(R.id.list).setOnClickListener {
-            loadFiles()
+
+        val title = TextView(this).apply {
+            text = "Hyouka Cloud"
+            setTextColor(Color.WHITE)
+            textSize = 28f
         }
+
+        status = TextView(this).apply {
+            text = "Ready"
+            setTextColor(Color.LTGRAY)
+            textSize = 15f
+            setPadding(0, dp(8), 0, dp(12))
+        }
+
+        val upload = Button(this).apply {
+            text = "Upload files"
+            setOnClickListener { picker.launch(arrayOf("*/*")) }
+        }
+
+        hash = EditText(this).apply {
+            hint = "Catbox userhash (optional)"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+
+        val list = Button(this).apply {
+            text = "My files"
+            setOnClickListener { loadFiles() }
+        }
+
+        filesView = TextView(this).apply {
+            text = "Uploaded links will appear here."
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setTextIsSelectable(true)
+            setPadding(0, dp(16), 0, 0)
+        }
+
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(
+                filesView,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+
+        root.addView(title)
+        root.addView(status)
+        root.addView(upload, matchParams(dp(8)))
+        root.addView(hash, matchParams(dp(8)))
+        root.addView(list, matchParams(dp(8)))
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        setContentView(root)
     }
 
     private fun uploadAll(uris: List<Uri>) {
         lifecycleScope.launch {
-            var completed = 0
-            var failed = 0
+            try {
+                var completed = 0
+                var failed = 0
+                val userhash = hash.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
 
-            for ((index, uri) in uris.withIndex()) {
-                if (isFinishing || isDestroyed) return@launch
-                status.text = "Uploading ${index + 1}/${uris.size}..."
+                for ((index, uri) in uris.withIndex()) {
+                    status.text = "Uploading " + (index + 1) + "/" + uris.size + "..."
 
-                val result = withContext(Dispatchers.IO) {
-                    val fileResult = runCatching { copyToCache(uri) }
-                    fileResult.fold(
-                        onSuccess = { file ->
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val file = copyToCache(uri)
                             try {
-                                api.upload(
-                                    file,
-                                    hash.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-                                )
+                                api.upload(file, userhash).getOrThrow()
                             } finally {
                                 file.delete()
                             }
-                        },
-                        onFailure = { Result.failure<String>(it) }
-                    )
+                        }
+                    }
+
+                    result.onSuccess {
+                        completed++
+                        appendResult(it)
+                    }.onFailure { error ->
+                        if (error is CancellationException) throw error
+                        failed++
+                        appendResult(
+                            "Error: " + (error.message ?: error.javaClass.simpleName)
+                        )
+                    }
                 }
 
-                result.onSuccess {
-                    completed++
-                    appendResult(it)
-                }.onFailure { error ->
-                    if (error is CancellationException) throw error
-                    failed++
-                    appendResult("Error: ${error.message ?: error.javaClass.simpleName}")
-                }
+                status.text = "Done: " + completed + " uploaded, " + failed + " failed"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                status.text = "Upload error: " + (t.message ?: t.javaClass.simpleName)
             }
-
-            status.text = "Done: $completed uploaded, $failed failed"
         }
     }
 
@@ -95,25 +181,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            status.text = "Loading..."
+            try {
+                status.text = "Loading..."
+                val result = withContext(Dispatchers.IO) { api.files(h) }
 
-            val result = withContext(Dispatchers.IO) {
-                api.files(h)
-            }
-
-            result.onSuccess { list ->
-                filesView.text = if (list.isEmpty()) "No files found" else list.joinToString("\n\n")
-                status.text = "${list.size} files"
-            }.onFailure { error ->
-                if (error is CancellationException) throw error
-                status.text = "Error: ${error.message ?: error.javaClass.simpleName}"
+                result.onSuccess { list ->
+                    filesView.text =
+                        if (list.isEmpty()) "No files found" else list.joinToString("\n\n")
+                    status.text = list.size.toString() + " files"
+                }.onFailure { error ->
+                    status.text = "Error: " + (error.message ?: error.javaClass.simpleName)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                status.text = "List error: " + (t.message ?: t.javaClass.simpleName)
             }
         }
     }
 
     private fun copyToCache(uri: Uri): File {
         val name = contentName(uri)
-        val file = File.createTempFile("catbox_", "_$name", cacheDir)
+        val file = File.createTempFile("catbox_", "_" + name, cacheDir)
 
         val input = contentResolver.openInputStream(uri)
             ?: run {
@@ -151,12 +240,24 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        return name.filter { it.code >= 32 && it !in charArrayOf('/', '\\', ':', '*', '?', '"', '<', '>', '|') }
-            .take(180)
-            .ifBlank { "upload.bin" }
+
+        return name.filter {
+            it.code >= 32 && it !in charArrayOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
+        }.take(180).ifBlank { "upload.bin" }
     }
 
     private fun appendResult(text: String) {
-        filesView.append("\n$text")
+        filesView.append("\n" + text)
     }
+
+    private fun matchParams(topMargin: Int) =
+        LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            this.topMargin = topMargin
+        }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 }
