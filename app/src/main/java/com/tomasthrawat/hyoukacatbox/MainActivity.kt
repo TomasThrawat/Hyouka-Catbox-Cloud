@@ -24,7 +24,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
     private lateinit var filesView: TextView
     private lateinit var hash: EditText
+
     private val api = CatboxApi
+    private val prefs by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
 
     private val picker = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -40,6 +42,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         try {
             buildUi()
+            showSavedLinks()
         } catch (t: Throwable) {
             val fallback = TextView(this).apply {
                 setTextColor(Color.WHITE)
@@ -92,7 +95,7 @@ class MainActivity : ComponentActivity() {
 
         val list = Button(this).apply {
             text = "My files"
-            setOnClickListener { loadFiles() }
+            setOnClickListener { showSavedLinks() }
         }
 
         filesView = TextView(this).apply {
@@ -154,6 +157,7 @@ class MainActivity : ComponentActivity() {
 
                     result.onSuccess {
                         completed++
+                        saveLink(it)
                         appendResult(it)
                     }.onFailure { error ->
                         if (error is CancellationException) throw error
@@ -173,31 +177,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun loadFiles() {
-        val h = hash.text?.toString()?.trim().orEmpty()
-        if (h.isBlank()) {
-            status.text = "Enter your Catbox userhash"
-            return
+    private fun showSavedLinks() {
+        val links = readSavedLinks()
+        filesView.text = if (links.isEmpty()) {
+            "No uploaded links saved yet.\n\nMy files shows local upload history. Catbox's official API does not provide an account-file listing request."
+        } else {
+            links.joinToString("\n\n")
         }
+        status.text = if (links.isEmpty()) "No saved links" else links.size.toString() + " saved links"
+    }
 
-        lifecycleScope.launch {
-            try {
-                status.text = "Loading..."
-                val result = withContext(Dispatchers.IO) { api.files(h) }
+    private fun readSavedLinks(): List<String> =
+        prefs.getString(KEY_HISTORY, "")
+            .orEmpty()
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .toList()
 
-                result.onSuccess { list ->
-                    filesView.text =
-                        if (list.isEmpty()) "No files found" else list.joinToString("\n\n")
-                    status.text = list.size.toString() + " files"
-                }.onFailure { error ->
-                    status.text = "Error: " + (error.message ?: error.javaClass.simpleName)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (t: Throwable) {
-                status.text = "List error: " + (t.message ?: t.javaClass.simpleName)
-            }
-        }
+    private fun saveLink(url: String) {
+        if (url.isBlank()) return
+        val links = (listOf(url) + readSavedLinks().filterNot { it == url })
+            .take(MAX_HISTORY)
+        prefs.edit().putString(KEY_HISTORY, links.joinToString("\n")).apply()
     }
 
     private fun copyToCache(uri: Uri): File {
@@ -211,9 +214,7 @@ class MainActivity : ComponentActivity() {
             }
 
         input.use { source ->
-            file.outputStream().use { output ->
-                source.copyTo(output)
-            }
+            file.outputStream().use { output -> source.copyTo(output) }
         }
 
         if (!file.exists() || file.length() == 0L) {
@@ -254,10 +255,14 @@ class MainActivity : ComponentActivity() {
         LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            this.topMargin = topMargin
-        }
+        ).apply { this.topMargin = topMargin }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        const val PREFS_NAME = "hyouka_catbox"
+        const val KEY_HISTORY = "uploaded_links"
+        const val MAX_HISTORY = 500
+    }
 }
