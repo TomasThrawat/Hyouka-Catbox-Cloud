@@ -1,40 +1,31 @@
 # Hyouka Catbox Cloud
 
-Native Kotlin Android client for Catbox uploads and a configurable account-files API.
+Native Kotlin Android client for the documented Catbox API.
 
 ## Current features
 
-- Multi-file upload to Catbox.
-- Optional Catbox userhash for uploads.
-- Save the userhash locally on the device.
-- Real Download buttons using Android DownloadManager.
-- My Files is now API-driven, not based on local upload history.
-- Configurable API URL, API key, and authentication style.
+- Multi-file uploads with Catbox's `fileupload` request.
+- URL uploads with Catbox's `urlupload` request.
+- Optional Catbox userhash for account-linked requests.
+- Local upload history on the device.
+- Download buttons using Android DownloadManager.
+- Delete buttons using Catbox's documented `deletefiles` request when a userhash is available.
+- Official Catbox API endpoint is fixed to `https://catbox.moe/user/api.php`.
 
-## Account Files API
+## My Uploads
 
-The app expects the API you provide to return JSON containing a file array.
+The app stores a local history of successful uploads.
 
-Accepted examples:
+The Catbox API documentation provides upload, URL upload, delete-files, and album request types, but does not document a request for listing all files belonging to a userhash. Therefore the app does not pretend that a GET request to the Catbox API can synchronize a server-side account file list.
 
-[{"name":"photo.jpg","url":"https://example.com/photo.jpg"}]
+## Authentication
 
-or:
+For anonymous uploads, no userhash is sent.
 
-{"files":[{"name":"photo.jpg","url":"https://example.com/photo.jpg"}]}
+For account-linked requests, enter the Catbox userhash exactly as provided by Catbox. The app can save it locally if you enable the checkbox.
 
-Common fields are supported: url, link, download_url, filename, name, file_name, and size.
+The documented Catbox API uses `userhash` for account requests. It does not use a generic `Authorization: Bearer`, `X-API-Key`, or `?api_key=` scheme.
 
-Authentication options:
+## Build
 
-- Authorization: Bearer <key>
-- X-API-Key: <key>
-- Query: ?api_key=<key>
-
-Enter the API URL and key in the app when you receive them.
-
-## Important
-
-The official Catbox API does not document an account-file-list request by userhash. Therefore the API-driven My Files screen is intentionally separated from the Catbox upload API.
-
-No Catbox credentials are bundled into the APK.
+The GitHub Actions workflow builds a debug APK with Java 17 and Gradle 8.7.

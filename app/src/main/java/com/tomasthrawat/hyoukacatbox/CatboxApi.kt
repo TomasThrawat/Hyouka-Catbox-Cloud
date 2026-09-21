@@ -9,7 +9,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 object CatboxApi {
-    private const val API_URL = "https://catbox.moe/user/api.php"
+    const val API_URL = "https://catbox.moe/user/api.php"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -33,6 +33,49 @@ object CatboxApi {
             )
             .build()
 
+        post(body)
+    }
+
+    fun uploadUrl(url: String, userhash: String? = null): Result<String> = runCatching {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("reqtype", "urlupload")
+            .apply {
+                if (!userhash.isNullOrBlank()) {
+                    addFormDataPart("userhash", userhash)
+                }
+            }
+            .addFormDataPart("url", url)
+            .build()
+
+        post(body)
+    }
+
+    fun deleteFiles(fileNames: List<String>, userhash: String): Result<Unit> = runCatching {
+        require(userhash.isNotBlank()) { "Catbox userhash is required" }
+        require(fileNames.isNotEmpty()) { "No Catbox files selected" }
+
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("reqtype", "deletefiles")
+            .addFormDataPart("userhash", userhash)
+            .addFormDataPart("files", fileNames.joinToString(" "))
+            .build()
+
+        client.newCall(
+            Request.Builder()
+                .url(API_URL)
+                .post(body)
+                .build()
+        ).execute().use { response ->
+            val text = response.body?.string()?.trim().orEmpty()
+            if (!response.isSuccessful) {
+                error("HTTP " + response.code + ": " + text)
+            }
+        }
+    }
+
+    private fun post(body: MultipartBody): String {
         val request = Request.Builder()
             .url(API_URL)
             .post(body)
@@ -40,21 +83,22 @@ object CatboxApi {
 
         client.newCall(request).execute().use { response ->
             val text = response.body?.string()?.trim().orEmpty()
+
             if (!response.isSuccessful) {
-                error("HTTP ${response.code}: $text")
+                error("HTTP " + response.code + ": " + text)
             }
 
             if (text.startsWith("https://") || text.startsWith("http://")) {
-                text
-            } else {
-                error(
-                    if (text.isBlank()) {
-                        "Catbox returned an empty response"
-                    } else {
-                        text
-                    }
-                )
+                return text
             }
+
+            error(
+                if (text.isBlank()) {
+                    "Catbox returned an empty response"
+                } else {
+                    text
+                }
+            )
         }
     }
 }
