@@ -404,7 +404,7 @@ class MainActivity : ComponentActivity() {
     private fun enqueueDownload(fileName: String, url: String) {
         runCatching {
             val safeName = fileName
-                .filter { it.code >= 32 && it !in charArrayOf('/', '\\\\', ':', '*', '?', '"', '<', '>', '|') }
+                .filter { it.code >= 32 && it.code != 92 && it !in charArrayOf('/', ':', '*', '?', '"', '<', '>', '|') }
                 .take(180)
                 .ifBlank { "download.bin" }
 
@@ -434,7 +434,7 @@ class MainActivity : ComponentActivity() {
 
     private fun copyToCache(uri: Uri, name: String): File {
         val safeName = name
-            .filter { it.code >= 32 && it !in charArrayOf('/', '\\\\') }
+            .filter { it.code >= 32 && it.code != 92 && it != '/' }
             .take(180)
             .ifBlank { "upload.bin" }
 
