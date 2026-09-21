@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.OpenableColumns
 import android.text.InputType
-import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -22,7 +21,6 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,6 +29,7 @@ import java.io.IOException
 import java.net.URLDecoder
 
 class MainActivity : ComponentActivity() {
+
     private lateinit var status: TextView
     private lateinit var filesContainer: LinearLayout
     private lateinit var userHash: EditText
@@ -57,7 +56,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         buildUi()
         loadSettings()
-        showApiHint()
     }
 
     private fun buildUi() {
@@ -85,31 +83,32 @@ class MainActivity : ComponentActivity() {
 
         val upload = Button(this).apply {
             text = "Upload files"
-            setOnClickListener { picker.launch(arrayOf("*/*")) }
+            setOnClickListener {
+                picker.launch(arrayOf("*/*"))
+            }
         }
 
         userHash = editText("Catbox userhash (optional)", password = true)
-
         saveHash = CheckBox(this).apply {
             text = "Save userhash on this device"
             setTextColor(Color.WHITE)
         }
 
-        val divider1 = label("Account Files API")
+        val section = label("Account Files API")
+
         apiUrl = editText("API URL, for example https://example.com/files", password = false)
         apiKey = editText("API key", password = true)
 
-        authMode = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                arrayOf(
-                    "Authorization: Bearer <key>",
-                    "X-API-Key: <key>",
-                    "Query: ?api_key=<key>"
-                )
+        authMode = Spinner(this)
+        authMode.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            arrayOf(
+                "Authorization: Bearer <key>",
+                "X-API-Key: <key>",
+                "Query: ?api_key=<key>"
             )
-        }
+        )
 
         saveApi = CheckBox(this).apply {
             text = "Save API settings on this device"
@@ -122,7 +121,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val note = TextView(this).apply {
-            text = "My Files now comes from the configured API. The endpoint must return JSON containing a file list."
+            text = "My Files comes from the configured API endpoint. The endpoint must return JSON containing a file list."
             setTextColor(Color.GRAY)
             textSize = 13f
             setPadding(0, dp(4), 0, dp(12))
@@ -134,10 +133,11 @@ class MainActivity : ComponentActivity() {
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
-            addView(filesContainer, ViewGroup.LayoutParams(
+            addView(
+                filesContainer,
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
+            )
         }
 
         root.addView(title)
@@ -145,42 +145,50 @@ class MainActivity : ComponentActivity() {
         root.addView(upload, matchParams(dp(8)))
         root.addView(userHash, matchParams(dp(8)))
         root.addView(saveHash)
-        root.addView(divider1, matchParams(dp(8)))
+        root.addView(section, matchParams(dp(8)))
         root.addView(apiUrl, matchParams(dp(8)))
         root.addView(apiKey, matchParams(dp(8)))
         root.addView(authMode, matchParams(dp(8)))
         root.addView(saveApi)
         root.addView(sync, matchParams(dp(8)))
         root.addView(note)
-        root.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
 
         setContentView(root)
     }
 
-    private fun showApiHint() {
-        if (prefs.getString(KEY_API_URL, "").orEmpty().isBlank()) {
-            addInfoRow("API is not configured yet. Add the API URL and key you receive, then press Sync My Files.")
-        }
-    }
-
     private fun loadSettings() {
-        prefs.getString(KEY_USERHASH, "").orEmpty().takeIf { it.isNotBlank() }?.let {
-            userHash.setText(it)
-            saveHash.isChecked = true
-        }
+        prefs.getString(KEY_USERHASH, "").orEmpty()
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                userHash.setText(it)
+                saveHash.isChecked = true
+            }
 
-        prefs.getString(KEY_API_URL, "").orEmpty().takeIf { it.isNotBlank() }?.let {
-            apiUrl.setText(it)
-        }
+        prefs.getString(KEY_API_URL, "").orEmpty()
+            .takeIf { it.isNotBlank() }
+            ?.let { apiUrl.setText(it) }
 
-        prefs.getString(KEY_API_KEY, "").orEmpty().takeIf { it.isNotBlank() }?.let {
-            apiKey.setText(it)
-            saveApi.isChecked = true
-        }
+        prefs.getString(KEY_API_KEY, "").orEmpty().trim()
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                apiKey.setText(it)
+                saveApi.isChecked = true
+            }
+            ?: BuildConfig.DEFAULT_ACCOUNT_API_KEY.trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { apiKey.setText(it) }
 
-        authMode.setSelection(prefs.getInt(KEY_AUTH_MODE, 0).coerceIn(0, 2))
+        authMode.setSelection(
+            prefs.getInt(KEY_AUTH_MODE, 0).coerceIn(0, 2)
+        )
 
         saveHash.setOnCheckedChangeListener { _, checked ->
             if (checked) saveCurrentUserHash()
@@ -201,28 +209,20 @@ class MainActivity : ComponentActivity() {
         val value = userHash.text?.toString()?.trim().orEmpty()
         if (value.isBlank()) {
             prefs.edit().remove(KEY_USERHASH).apply()
-            status.text = "Enter a userhash to save it"
         } else {
             prefs.edit().putString(KEY_USERHASH, value).apply()
-            status.text = "Userhash saved"
         }
     }
 
     private fun saveCurrentApiSettings() {
         val url = apiUrl.text?.toString()?.trim().orEmpty()
         val key = apiKey.text?.toString()?.trim().orEmpty()
-
-        if (url.isBlank()) {
-            status.text = "Enter an API URL to save API settings"
-            return
-        }
-
+        if (url.isBlank()) return
         prefs.edit()
             .putString(KEY_API_URL, url)
             .putString(KEY_API_KEY, key)
             .putInt(KEY_AUTH_MODE, authMode.selectedItemPosition)
             .apply()
-        status.text = "API settings saved"
     }
 
     private fun uploadAll(uris: List<Uri>) {
@@ -234,13 +234,12 @@ class MainActivity : ComponentActivity() {
             val hash = userHash.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
 
             try {
-                for ((index, uri) in uris.withIndex()) {
-                    status.text = "Uploading " + (index + 1) + "/" + uris.size + "..."
-
+                uris.forEachIndexed { index, uri ->
+                    status.text = "Uploading \${index + 1}/\${uris.size}..."
                     val result = withContext(Dispatchers.IO) {
                         runCatching {
-                            val originalName = contentName(uri)
-                            val file = copyToCache(uri, originalName)
+                            val name = contentName(uri)
+                            val file = copyToCache(uri, name)
                             try {
                                 api.upload(file, hash).getOrThrow()
                             } finally {
@@ -253,14 +252,14 @@ class MainActivity : ComponentActivity() {
                         completed++
                         addFileRow(contentName(uri), url)
                     }.onFailure { error ->
-                        if (error is CancellationException) throw error
+                        if (error is kotlinx.coroutines.CancellationException) throw error
                         failed++
                         addErrorRow("Upload error: " + (error.message ?: error.javaClass.simpleName))
                     }
                 }
 
                 status.text = "Done: " + completed + " uploaded, " + failed + " failed"
-            } catch (error: CancellationException) {
+            } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 status.text = "Upload error: " + (error.message ?: error.javaClass.simpleName)
@@ -282,7 +281,6 @@ class MainActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             status.text = "Loading My Files..."
-
             val result = withContext(Dispatchers.IO) {
                 runCatching { AccountApi.fetchFiles(endpoint, key, mode) }
             }
@@ -318,33 +316,30 @@ class MainActivity : ComponentActivity() {
             maxLines = 2
         }
 
-        val url = TextView(this).apply {
+        val link = TextView(this).apply {
             text = file.url
             setTextColor(Color.LTGRAY)
             textSize = 12f
-            setTextIsSelectable(true)
+            isTextSelectable = true
             maxLines = 3
+            setOnClickListener {
+                runCatching {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(file.url)))
+                }
+            }
         }
 
         val download = Button(this).apply {
             text = "Download"
-            setOnClickListener { enqueueDownload(file.name, file.url) }
+            setOnClickListener {
+                enqueueDownload(file.name, file.url)
+            }
         }
 
         row.addView(name)
-        row.addView(url, matchParams(dp(4)))
+        row.addView(link, matchParams(dp(4)))
         row.addView(download, matchParams(dp(4)))
-
-        val divider = View(this).apply { setBackgroundColor(Color.DKGRAY) }
-        val wrapper = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(row)
-            addView(divider, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
-            ))
-        }
-
-        filesContainer.addView(wrapper)
+        filesContainer.addView(row, 0)
     }
 
     private fun addFileRow(name: String, url: String) {
@@ -364,7 +359,7 @@ class MainActivity : ComponentActivity() {
             text = url
             setTextColor(Color.LTGRAY)
             textSize = 12f
-            setTextIsSelectable(true)
+            isTextSelectable = true
             maxLines = 3
             setOnClickListener {
                 runCatching {
@@ -375,7 +370,9 @@ class MainActivity : ComponentActivity() {
 
         val download = Button(this).apply {
             text = "Download"
-            setOnClickListener { enqueueDownload(name, url) }
+            setOnClickListener {
+                enqueueDownload(name, url)
+            }
         }
 
         row.addView(title)
@@ -407,10 +404,7 @@ class MainActivity : ComponentActivity() {
     private fun enqueueDownload(fileName: String, url: String) {
         runCatching {
             val safeName = fileName
-                .filter {
-                    it.code >= 32 &&
-                        it !in charArrayOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
-                }
+                .filter { it.code >= 32 && it !in charArrayOf('/', '\\\\', ':', '*', '?', '"', '<', '>', '|') }
                 .take(180)
                 .ifBlank { "download.bin" }
 
@@ -431,8 +425,7 @@ class MainActivity : ComponentActivity() {
                     safeName
                 )
 
-            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            manager.enqueue(request)
+            (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
             status.text = "Download started: " + safeName
         }.onFailure {
             status.text = "Download error: " + (it.message ?: it.javaClass.simpleName)
@@ -440,17 +433,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun copyToCache(uri: Uri, name: String): File {
-        val safe = name
-            .filter { it.code >= 32 && it !in charArrayOf('/', '\\') }
+        val safeName = name
+            .filter { it.code >= 32 && it !in charArrayOf('/', '\\\\') }
             .take(180)
             .ifBlank { "upload.bin" }
 
-        val file = File.createTempFile("catbox_", "_" + safe, cacheDir)
+        val file = File.createTempFile("catbox_", "_$safeName", cacheDir)
         val input = contentResolver.openInputStream(uri)
             ?: throw IOException("Unable to open selected file")
 
         input.use { source ->
-            file.outputStream().use { target -> source.copyTo(target) }
+            file.outputStream().use { target ->
+                source.copyTo(target)
+            }
         }
 
         if (!file.exists() || file.length() == 0L) {
@@ -466,21 +461,18 @@ class MainActivity : ComponentActivity() {
             contentResolver.query(
                 uri,
                 arrayOf(OpenableColumns.DISPLAY_NAME),
-                null, null, null
+                null,
+                null,
+                null
             )?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     cursor.getString(0)?.takeIf { it.isNotBlank() }
                 } else null
             }
-        }.getOrNull() ?: originalDisplayName(uri)
-    }
-
-    private fun originalDisplayName(uri: Uri): String {
-        val decoded = runCatching {
-            URLDecoder.decode(uri.lastPathSegment.orEmpty(), "UTF-8")
-        }.getOrNull().orEmpty()
-
-        return decoded.substringAfterLast('/').ifBlank { "upload.bin" }
+        }.getOrNull()
+            ?: URLDecoder.decode(uri.lastPathSegment.orEmpty(), "UTF-8")
+                .substringAfterLast('/')
+                .ifBlank { "upload.bin" }
     }
 
     private fun editText(hintText: String, password: Boolean): EditText {
@@ -509,17 +501,19 @@ class MainActivity : ComponentActivity() {
         return LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = top }
+        ).apply {
+            topMargin = top
+        }
     }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
-    private companion object {
-        const val PREFS_NAME = "hyouka_catbox"
-        const val KEY_USERHASH = "saved_userhash"
-        const val KEY_API_URL = "account_api_url"
-        const val KEY_API_KEY = "account_api_key"
-        const val KEY_AUTH_MODE = "account_api_auth_mode"
+    companion object {
+        private const val PREFS_NAME = "hyouka_catbox"
+        private const val KEY_USERHASH = "saved_userhash"
+        private const val KEY_API_URL = "account_api_url"
+        private const val KEY_API_KEY = "account_api_key"
+        private const val KEY_AUTH_MODE = "account_api_auth_mode"
     }
 }

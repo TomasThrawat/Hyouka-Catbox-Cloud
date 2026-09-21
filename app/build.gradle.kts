@@ -11,8 +11,17 @@ android {
         applicationId = "com.tomasthrawat.hyoukacatbox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
+
+        val defaultAccountApiKey = System.getenv("HYOUKA_ACCOUNT_API_KEY").orEmpty()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "DEFAULT_ACCOUNT_API_KEY", "\"$defaultAccountApiKey\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {
