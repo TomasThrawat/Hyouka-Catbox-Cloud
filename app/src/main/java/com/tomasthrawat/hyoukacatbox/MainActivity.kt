@@ -1,11 +1,16 @@
 package com.tomasthrawat.hyoukacatbox
 
+import android.app.DownloadManager
+import android.content.Context
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.provider.OpenableColumns
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -17,13 +22,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.net.URLConnection
 
 class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
-    private lateinit var filesView: TextView
+    private lateinit var filesContainer: LinearLayout
     private lateinit var hash: EditText
+    private lateinit var saveHash: CheckBox
 
     private val api = CatboxApi
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
@@ -42,7 +51,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         try {
             buildUi()
-            showSavedLinks()
+            loadSavedHash()
+            showSavedFiles()
         } catch (t: Throwable) {
             val fallback = TextView(this).apply {
                 setTextColor(Color.WHITE)
@@ -93,23 +103,32 @@ class MainActivity : ComponentActivity() {
             setSingleLine(true)
         }
 
-        val list = Button(this).apply {
-            text = "My files"
-            setOnClickListener { showSavedLinks() }
+        saveHash = CheckBox(this).apply {
+            text = "Save userhash on this device"
+            setTextColor(Color.WHITE)
+            setOnCheckedChangeListener { _, checked ->
+                if (checked) {
+                    saveCurrentHash()
+                } else {
+                    prefs.edit().remove(KEY_USERHASH).apply()
+                    status.text = "Saved userhash removed"
+                }
+            }
         }
 
-        filesView = TextView(this).apply {
-            text = "Uploaded links will appear here."
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setTextIsSelectable(true)
-            setPadding(0, dp(16), 0, 0)
+        val list = Button(this).apply {
+            text = "My files"
+            setOnClickListener { showSavedFiles() }
+        }
+
+        filesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             addView(
-                filesView,
+                filesContainer,
                 ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
@@ -121,6 +140,7 @@ class MainActivity : ComponentActivity() {
         root.addView(status)
         root.addView(upload, matchParams(dp(8)))
         root.addView(hash, matchParams(dp(8)))
+        root.addView(saveHash, matchParams(dp(2)))
         root.addView(list, matchParams(dp(8)))
         root.addView(
             scroll,
@@ -134,9 +154,32 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
     }
 
+    private fun loadSavedHash() {
+        val saved = prefs.getString(KEY_USERHASH, "").orEmpty()
+        if (saved.isNotBlank()) {
+            hash.setText(saved)
+            saveHash.isChecked = true
+        }
+    }
+
+    private fun saveCurrentHash() {
+        val value = hash.text?.toString()?.trim().orEmpty()
+        if (value.isBlank()) {
+            prefs.edit().remove(KEY_USERHASH).apply()
+            status.text = "Enter a userhash to save it"
+        } else {
+            prefs.edit().putString(KEY_USERHASH, value).apply()
+            status.text = "Userhash saved"
+        }
+    }
+
     private fun uploadAll(uris: List<Uri>) {
         lifecycleScope.launch {
             try {
+                if (saveHash.isChecked) {
+                    saveCurrentHash()
+                }
+
                 var completed = 0
                 var failed = 0
                 val userhash = hash.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
@@ -144,9 +187,10 @@ class MainActivity : ComponentActivity() {
                 for ((index, uri) in uris.withIndex()) {
                     status.text = "Uploading " + (index + 1) + "/" + uris.size + "..."
 
+                    val originalName = contentName(uri)
                     val result = withContext(Dispatchers.IO) {
                         runCatching {
-                            val file = copyToCache(uri)
+                            val file = copyToCache(uri, originalName)
                             try {
                                 api.upload(file, userhash).getOrThrow()
                             } finally {
@@ -155,16 +199,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    result.onSuccess {
+                    result.onSuccess { url ->
                         completed++
-                        saveLink(it)
-                        appendResult(it)
+                        saveFileEntry(originalName, url)
+                        addFileRow(originalName, url, atTop = true)
                     }.onFailure { error ->
                         if (error is CancellationException) throw error
                         failed++
-                        appendResult(
-                            "Error: " + (error.message ?: error.javaClass.simpleName)
-                        )
+                        addErrorRow("Error: " + (error.message ?: error.javaClass.simpleName))
                     }
                 }
 
@@ -177,34 +219,173 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun showSavedLinks() {
-        val links = readSavedLinks()
-        filesView.text = if (links.isEmpty()) {
-            "No uploaded links saved yet.\n\nMy files shows local upload history. Catbox's official API does not provide an account-file listing request."
-        } else {
-            links.joinToString("\n\n")
+    private fun showSavedFiles() {
+        filesContainer.removeAllViews()
+        val entries = readSavedFiles()
+
+        if (entries.isEmpty()) {
+            val empty = TextView(this).apply {
+                text = "No uploaded files saved yet.\n\nMy files is local upload history."
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setPadding(0, dp(16), 0, 0)
+            }
+            filesContainer.addView(empty)
+            status.text = "No saved files"
+            return
         }
-        status.text = if (links.isEmpty()) "No saved links" else links.size.toString() + " saved links"
+
+        entries.forEach { entry ->
+            addFileRow(entry.name, entry.url, atTop = false)
+        }
+        status.text = entries.size.toString() + " saved files"
     }
 
-    private fun readSavedLinks(): List<String> =
-        prefs.getString(KEY_HISTORY, "")
-            .orEmpty()
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .distinct()
-            .toList()
+    private fun addFileRow(name: String, url: String, atTop: Boolean) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+        }
 
-    private fun saveLink(url: String) {
+        val nameView = TextView(this).apply {
+            text = name
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            maxLines = 2
+        }
+
+        val urlView = TextView(this).apply {
+            text = url
+            setTextColor(Color.LTGRAY)
+            textSize = 12f
+            setTextIsSelectable(true)
+            maxLines = 2
+        }
+
+        val download = Button(this).apply {
+            text = "Download"
+            setOnClickListener {
+                enqueueDownload(name, url)
+            }
+        }
+
+        row.addView(nameView)
+        row.addView(urlView, matchParams(dp(4)))
+        row.addView(download, matchParams(dp(4)))
+
+        val divider = View(this).apply {
+            setBackgroundColor(Color.DKGRAY)
+        }
+
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(row)
+            addView(
+                divider,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(1)
+                )
+            )
+        }
+
+        if (atTop && filesContainer.childCount > 0) {
+            filesContainer.addView(wrapper, 0)
+        } else {
+            filesContainer.addView(wrapper)
+        }
+    }
+
+    private fun addErrorRow(message: String) {
+        val errorView = TextView(this).apply {
+            text = message
+            setTextColor(Color.RED)
+            textSize = 14f
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        filesContainer.addView(errorView)
+    }
+
+    private fun enqueueDownload(fileName: String, url: String) {
+        runCatching {
+            val safeName = fileName
+                .filter { it.code >= 32 && it !in charArrayOf('/', '\\', ':', '*', '?', '"', '<', '>', '|') }
+                .take(180)
+                .ifBlank { "download.bin" }
+
+            val request = DownloadManager.Request(Uri.parse(url))
+                .setTitle(safeName)
+                .setDescription("Downloading from Catbox")
+                .setNotificationVisibility(
+                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                )
+                .setMimeType(
+                    URLConnection.guessContentTypeFromName(safeName)
+                        ?: "application/octet-stream"
+                )
+                .setDestinationInExternalPublicDir(
+                    Environment.DIRECTORY_DOWNLOADS,
+                    safeName
+                )
+
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            manager.enqueue(request)
+            status.text = "Download started: " + safeName
+        }.onFailure {
+            status.text = "Download error: " + (it.message ?: it.javaClass.simpleName)
+        }
+    }
+
+    private fun readSavedFiles(): List<FileEntry> {
+        val raw = prefs.getString(KEY_HISTORY, "").orEmpty()
+        if (raw.isBlank()) return emptyList()
+
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val url = item.optString("url").trim()
+                    if (url.isBlank()) continue
+                    add(
+                        FileEntry(
+                            item.optString("name").ifBlank { "download.bin" },
+                            url
+                        )
+                    )
+                }
+            }
+        }.getOrElse {
+            raw.lineSequence()
+                .map { it.trim() }
+                .filter { it.startsWith("http://") || it.startsWith("https://") }
+                .distinct()
+                .map { FileEntry("download.bin", it) }
+                .toList()
+        }
+    }
+
+    private fun saveFileEntry(name: String, url: String) {
         if (url.isBlank()) return
-        val links = (listOf(url) + readSavedLinks().filterNot { it == url })
-            .take(MAX_HISTORY)
-        prefs.edit().putString(KEY_HISTORY, links.joinToString("\n")).apply()
+
+        val updated = buildList {
+            add(FileEntry(name, url))
+            addAll(readSavedFiles().filterNot { it.url == url })
+        }.take(MAX_HISTORY)
+
+        val array = JSONArray()
+        updated.forEach {
+            array.put(
+                JSONObject()
+                    .put("name", it.name)
+                    .put("url", it.url)
+            )
+        }
+
+        prefs.edit().putString(KEY_HISTORY, array.toString()).apply()
     }
 
-    private fun copyToCache(uri: Uri): File {
-        val name = contentName(uri)
+    private fun copyToCache(uri: Uri, name: String): File {
         val file = File.createTempFile("catbox_", "_" + name, cacheDir)
 
         val input = contentResolver.openInputStream(uri)
@@ -247,10 +428,6 @@ class MainActivity : ComponentActivity() {
         }.take(180).ifBlank { "upload.bin" }
     }
 
-    private fun appendResult(text: String) {
-        filesView.append("\n" + text)
-    }
-
     private fun matchParams(topMargin: Int) =
         LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -260,9 +437,12 @@ class MainActivity : ComponentActivity() {
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
+    private data class FileEntry(val name: String, val url: String)
+
     private companion object {
         const val PREFS_NAME = "hyouka_catbox"
-        const val KEY_HISTORY = "uploaded_links"
+        const val KEY_HISTORY = "uploaded_files"
+        const val KEY_USERHASH = "saved_userhash"
         const val MAX_HISTORY = 500
     }
 }
