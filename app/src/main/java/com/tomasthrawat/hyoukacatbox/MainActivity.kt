@@ -320,7 +320,7 @@ class MainActivity : ComponentActivity() {
             text = file.url
             setTextColor(Color.LTGRAY)
             textSize = 12f
-            isTextSelectable = true
+            setTextIsSelectable(true)
             maxLines = 3
             setOnClickListener {
                 runCatching {
@@ -359,7 +359,7 @@ class MainActivity : ComponentActivity() {
             text = url
             setTextColor(Color.LTGRAY)
             textSize = 12f
-            isTextSelectable = true
+            setTextIsSelectable(true)
             maxLines = 3
             setOnClickListener {
                 runCatching {
