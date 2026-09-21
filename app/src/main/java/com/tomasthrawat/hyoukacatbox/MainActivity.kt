@@ -96,7 +96,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val divider1 = label("Account Files API")
-        apiUrl = editText("API URL, for example https://example.com/files")
+        apiUrl = editText("API URL, for example https://example.com/files", password = false)
         apiKey = editText("API key", password = true)
 
         authMode = Spinner(this).apply {
